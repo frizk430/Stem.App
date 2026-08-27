@@ -104,24 +104,17 @@ export default function MenuPage() {
                   <div style={S.cardBody}>
                     <div style={S.strainName}>{g.strain}</div>
                     <div style={S.gradeList}>
-                      {g.items.map((it, i) => {
-                        const rt = rangeText(it.priceRange);
-                        return (
-                          <div key={i} style={S.gradeLine}>
-                            <span style={{ ...S.gradeChip, borderColor: GRADE_COLOR[it.grade] || "#6B7264", color: GRADE_COLOR[it.grade] || "#B9BFA9" }}>
-                              {it.gradeLabel}{it.isBest ? " ★" : ""} · {it.lbs} lb
-                            </span>
-                            <span style={rt ? S.gradePrice : S.gradeAsk}>{rt || "Ask rep"}</span>
-                          </div>
-                        );
-                      })}
+                      {g.items.map((it, i) => (
+                        <div key={i} style={S.gradeLine}>
+                          <span style={{ ...S.gradeChip, borderColor: GRADE_COLOR[it.grade] || "#6B7264", color: GRADE_COLOR[it.grade] || "#B9BFA9" }}>
+                            {it.gradeLabel}{it.isBest ? " ★" : ""} · {it.lbs} lb
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                    {g.items.some((it) => rangeText(it.priceRange)) && (
-                      <div>
-                        <div style={S.priceNote}>*Prices vary by batch and quality</div>
-                        <div style={S.priceNote}>Discount for multiple units. Ask rep</div>
-                      </div>
-                    )}
+                    <div style={S.askPricing}>Ask your rep for pricing</div>
+                    <div style={S.priceNote}>*Prices vary by batch and quality</div>
+                    <div style={S.priceNote}>Discount for multiple units — ask rep</div>
                   </div>
                 </div>
               ))}
@@ -160,11 +153,11 @@ const S = {
   strainName: { fontSize: 17, fontWeight: 700, marginBottom: 8 },
   gradeRow: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 },
   gradeChip: { fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 7, border: "1px solid", fontFamily: "'IBM Plex Mono', ui-monospace, monospace" },
-  askPricing: { fontSize: 12.5, color: "#8C9483", fontStyle: "italic" },
+  askPricing: { fontSize: 14, fontWeight: 800, color: "#7CFF6B", marginTop: 4, letterSpacing: 0.2 },
   gradeList: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 },
   gradeLine: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   gradePrice: { fontSize: 13.5, fontWeight: 700, color: "#C9A24B", whiteSpace: "nowrap" },
   gradeAsk: { fontSize: 11.5, color: "#8C9483", fontStyle: "italic", whiteSpace: "nowrap" },
-  priceNote: { fontSize: 11, color: "#8C9483", fontStyle: "italic", marginTop: 2 },
+  priceNote: { fontSize: 12, fontWeight: 700, color: "#A6E22E", marginTop: 3 },
   footer: { textAlign: "center", padding: "36px 20px 0", color: "#8C9483", fontSize: 13 },
 };
