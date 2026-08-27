@@ -50,6 +50,19 @@ export default async function handler(req, res) {
   const SOURCE_LABEL = { daddyspipes: "Daddy's Pipes", merc: "MERC" };
   const GRADE_SHORT = { A: "A - Big", B: "B - Medium", C: "C - Small", D: "D", T: "Trim" };
 
+  // Map a stored strain (often a number) to the customer-facing name. Entries already typed as names
+  // pass through unchanged. Mirrors the app's strainDisplay helper.
+  const strainNames = appData.strainNames || {};
+  function displayStrain(strain) {
+    if (!strain) return strain || "";
+    const raw = String(strain).trim();
+    if (strainNames[raw]) return strainNames[raw];
+    const m = raw.match(/^#?\s*(\d+)\s*$/);
+    if (m && strainNames[m[1]]) return strainNames[m[1]];
+    const hit = Object.keys(strainNames).find((k) => k.trim().toLowerCase() === raw.toLowerCase());
+    return hit ? strainNames[hit] : strain;
+  }
+
   // Compute remaining grams for a batch: received + additions − shipped. Mirrors the app's math but
   // only for availability display (never exposes prices/customers).
   const shipments = Array.isArray(appData.shipments) ? appData.shipments : [];
@@ -74,7 +87,7 @@ export default async function handler(req, res) {
     const remaining = received - shippedFor(b.id);
     if (remaining <= 0) continue;
     items.push({
-      strain: b.strain || "",
+      strain: displayStrain(b.strain),
       grade: b.grade || "",
       gradeLabel: GRADE_SHORT[b.grade] || b.grade || "",
       room: b.room || "",
