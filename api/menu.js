@@ -83,8 +83,10 @@ export default async function handler(req, res) {
     if (b.type && b.type !== "bucked") continue;
     const source = b.origin || b.source;
     if (cultivation !== "all" && source !== cultivation) continue;
-    const received = (Number(b.receivedGrams) || 0) + (Array.isArray(b.additions) ? b.additions.reduce((s, a) => s + (Number(a.grams) || 0), 0) : 0);
-    const remaining = received - shippedFor(b.id);
+    // IMPORTANT: receivedGrams already includes every addition's weight (authorize bumps receivedGrams
+    // AND stores the tag in additions[]). So remaining = receivedGrams - shipped — do NOT re-add
+    // additions here or the menu double-counts. This matches the app's inventory math exactly.
+    const remaining = (Number(b.receivedGrams) || 0) - shippedFor(b.id);
     if (remaining <= 0) continue;
     items.push({
       strain: displayStrain(b.strain),
