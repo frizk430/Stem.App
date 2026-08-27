@@ -51,7 +51,7 @@ export default function MenuPage() {
   function rangeText(pr) {
     if (!pr) return null;
     if (pr.low != null && pr.high != null) return pr.low === pr.high ? `${money(pr.low)}/lb` : `${money(pr.low)}–${money(pr.high)}/lb`;
-    if (pr.low != null) return `From ${money(pr.low)}/lb`;
+    if (pr.low != null) return `Starting at ${money(pr.low)}/lb`;
     if (pr.high != null) return `Up to ${money(pr.high)}/lb`;
     return null;
   }
