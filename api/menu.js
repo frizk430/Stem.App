@@ -53,6 +53,7 @@ export default async function handler(req, res) {
   // Map a stored strain (often a number) to the customer-facing name. Entries already typed as names
   // pass through unchanged. Mirrors the app's strainDisplay helper.
   const strainNames = appData.strainNames || {};
+  const strainPrices = appData.strainPrices || {};
   function displayStrain(strain) {
     if (!strain) return strain || "";
     const raw = String(strain).trim();
@@ -61,6 +62,14 @@ export default async function handler(req, res) {
     if (m && strainNames[m[1]]) return strainNames[m[1]];
     const hit = Object.keys(strainNames).find((k) => k.trim().toLowerCase() === raw.toLowerCase());
     return hit ? strainNames[hit] : strain;
+  }
+  // Resolve a manual price range for a batch, keyed by its strain NUMBER. Returns {low, high} or null.
+  function priceRangeFor(strain) {
+    const raw = String(strain || "").trim();
+    const num = (raw.match(/^#?\s*(\d+)\s*$/) || [])[1] || raw;
+    const p = strainPrices[num];
+    if (p && (p.low != null || p.high != null)) return { low: p.low, high: p.high };
+    return null;
   }
 
   // Compute remaining grams for a batch: received + additions − shipped. Mirrors the app's math but
@@ -98,6 +107,7 @@ export default async function handler(req, res) {
       lbs: Math.round((remaining / G_PER_LB) * 10) / 10,
       isBest: !!b.isBest,
       photo: photoFor(b),
+      priceRange: priceRangeFor(b.strain),
     });
   }
 
@@ -107,7 +117,7 @@ export default async function handler(req, res) {
   for (const it of items) {
     const key = `${it.strain}__${it.grade}__${it.source}`;
     if (!groups[key]) { groups[key] = { ...it }; order.push(key); }
-    else { groups[key].lbs += it.lbs; if (!groups[key].photo && it.photo) groups[key].photo = it.photo; }
+    else { groups[key].lbs += it.lbs; if (!groups[key].photo && it.photo) groups[key].photo = it.photo; if (!groups[key].priceRange && it.priceRange) groups[key].priceRange = it.priceRange; }
   }
   const menu = order.map((k) => ({ ...groups[k], lbs: Math.round(groups[k].lbs * 10) / 10 }));
 

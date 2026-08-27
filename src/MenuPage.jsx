@@ -44,9 +44,17 @@ export default function MenuPage() {
   // Group the flat menu by strain for display (grades listed under each strain).
   const byStrain = (() => {
     const m = {}; const order = [];
-    (menu || []).forEach((it) => { if (!m[it.strain]) { m[it.strain] = { strain: it.strain, sourceLabel: it.sourceLabel, source: it.source, photo: it.photo, items: [] }; order.push(it.strain); } m[it.strain].items.push(it); if (!m[it.strain].photo && it.photo) m[it.strain].photo = it.photo; });
+    (menu || []).forEach((it) => { if (!m[it.strain]) { m[it.strain] = { strain: it.strain, sourceLabel: it.sourceLabel, source: it.source, photo: it.photo, priceRange: it.priceRange, items: [] }; order.push(it.strain); } m[it.strain].items.push(it); if (!m[it.strain].photo && it.photo) m[it.strain].photo = it.photo; if (!m[it.strain].priceRange && it.priceRange) m[it.strain].priceRange = it.priceRange; });
     return order.map((k) => m[k]);
   })();
+  const money = (n) => "$" + Number(n).toLocaleString();
+  function rangeText(pr) {
+    if (!pr) return null;
+    if (pr.low != null && pr.high != null) return pr.low === pr.high ? `${money(pr.low)}/lb` : `${money(pr.low)}–${money(pr.high)}/lb`;
+    if (pr.low != null) return `From ${money(pr.low)}/lb`;
+    if (pr.high != null) return `Up to ${money(pr.high)}/lb`;
+    return null;
+  }
 
   return (
     <div style={S.page}>
@@ -102,7 +110,14 @@ export default function MenuPage() {
                         </span>
                       ))}
                     </div>
-                    <div style={S.askPricing}>Ask your rep for pricing</div>
+                    {rangeText(g.priceRange) ? (
+                      <div>
+                        <div style={S.priceRange}>{rangeText(g.priceRange)}</div>
+                        <div style={S.priceNote}>*Prices vary by batch and quality</div>
+                      </div>
+                    ) : (
+                      <div style={S.askPricing}>Ask your rep for pricing</div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -142,5 +157,7 @@ const S = {
   gradeRow: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 },
   gradeChip: { fontSize: 12, fontWeight: 600, padding: "3px 9px", borderRadius: 7, border: "1px solid", fontFamily: "'IBM Plex Mono', ui-monospace, monospace" },
   askPricing: { fontSize: 12.5, color: "#8C9483", fontStyle: "italic" },
+  priceRange: { fontSize: 15, fontWeight: 700, color: "#C9A24B" },
+  priceNote: { fontSize: 11, color: "#8C9483", fontStyle: "italic", marginTop: 2 },
   footer: { textAlign: "center", padding: "36px 20px 0", color: "#8C9483", fontSize: 13 },
 };
