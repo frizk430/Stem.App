@@ -63,15 +63,25 @@ export default async function handler(req, res) {
     const hit = Object.keys(strainNames).find((k) => k.trim().toLowerCase() === raw.toLowerCase());
     return hit ? strainNames[hit] : strain;
   }
-  // Resolve a manual price range for a batch, keyed by strain NUMBER + GRADE.
-  // strainPrices["7"] = { A:{low,high}, B:{...}, C:{...} }. Returns {low,high} or null.
+  // Resolve a manual price range for a batch, keyed by strain NUMBER (MERC) or NAME (Daddy's), + GRADE.
+  // strainPrices["7"] or strainPrices["Zours"] = { A:{low,high}, B:{...}, C:{...} }.
   function priceRangeFor(strain, grade) {
     const raw = String(strain || "").trim();
-    const num = (raw.match(/^#?\s*(\d+)\s*$/) || [])[1] || raw;
-    const p = strainPrices[num];
-    if (!p) return null;
-    const g = p[grade];
-    if (g && (g.low != null || g.high != null)) return { low: g.low, high: g.high };
+    const num = (raw.match(/^#?\s*(\d+)\s*$/) || [])[1];
+    // Try, in order: the bare number, the raw value, the mapped display name, a case-insensitive name.
+    const candidates = [];
+    if (num) candidates.push(num);
+    candidates.push(raw);
+    const mapped = displayStrain(raw);
+    if (mapped && mapped !== raw) candidates.push(mapped);
+    for (const key of candidates) {
+      let p = strainPrices[key];
+      if (!p) {
+        const hit = Object.keys(strainPrices).find((k) => k.trim().toLowerCase() === String(key).trim().toLowerCase());
+        if (hit) p = strainPrices[hit];
+      }
+      if (p && p[grade] && (p[grade].low != null || p[grade].high != null)) return { low: p[grade].low, high: p[grade].high };
+    }
     return null;
   }
 

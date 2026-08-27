@@ -116,7 +116,12 @@ export default function MenuPage() {
                         );
                       })}
                     </div>
-                    {g.items.some((it) => rangeText(it.priceRange)) && <div style={S.priceNote}>*Prices vary by batch and quality</div>}
+                    {g.items.some((it) => rangeText(it.priceRange)) && (
+                      <div>
+                        <div style={S.priceNote}>*Prices vary by batch and quality</div>
+                        <div style={S.priceNote}>Discount for multiple units. Ask rep</div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
