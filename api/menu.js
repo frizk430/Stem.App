@@ -63,12 +63,15 @@ export default async function handler(req, res) {
     const hit = Object.keys(strainNames).find((k) => k.trim().toLowerCase() === raw.toLowerCase());
     return hit ? strainNames[hit] : strain;
   }
-  // Resolve a manual price range for a batch, keyed by its strain NUMBER. Returns {low, high} or null.
-  function priceRangeFor(strain) {
+  // Resolve a manual price range for a batch, keyed by strain NUMBER + GRADE.
+  // strainPrices["7"] = { A:{low,high}, B:{...}, C:{...} }. Returns {low,high} or null.
+  function priceRangeFor(strain, grade) {
     const raw = String(strain || "").trim();
     const num = (raw.match(/^#?\s*(\d+)\s*$/) || [])[1] || raw;
     const p = strainPrices[num];
-    if (p && (p.low != null || p.high != null)) return { low: p.low, high: p.high };
+    if (!p) return null;
+    const g = p[grade];
+    if (g && (g.low != null || g.high != null)) return { low: g.low, high: g.high };
     return null;
   }
 
@@ -107,7 +110,7 @@ export default async function handler(req, res) {
       lbs: Math.round((remaining / G_PER_LB) * 10) / 10,
       isBest: !!b.isBest,
       photo: photoFor(b),
-      priceRange: priceRangeFor(b.strain),
+      priceRange: priceRangeFor(b.strain, b.grade),
     });
   }
 
