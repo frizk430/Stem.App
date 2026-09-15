@@ -6522,6 +6522,21 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
     return ca === "daddyspipes" ? -1 : 1;
   });
   const combinedTitle = combinedOrders.map((o) => o.orderNumber).join(" + ");
+  // A batch billed on TWO different invoices of the same shipment is the double-bill worth catching:
+  // each invoice reads correctly alone, so it is only visible where they recombine. The same batch
+  // appearing twice on ONE invoice is ordinary — separate packages off one batch, each with its own
+  // Metrc tag — so that is not flagged. This is an internal check; the customer's copy never shows it.
+  const doubleBilled = (() => {
+    const seen = {};
+    combinedOrders.forEach((o) => (o.lineItems || []).forEach((li) => {
+      if (!li.batchId) return;
+      const e = seen[li.batchId] = seen[li.batchId] || { label: `${liName(li)} - Batch ${li.lot || "\u2014"}`, byInvoice: {} };
+      e.byInvoice[o.orderNumber] = (e.byInvoice[o.orderNumber] || 0) + (Number(li.grams) || 0);
+    }));
+    return Object.values(seen)
+      .filter((e) => Object.keys(e.byInvoice).length > 1)
+      .map((e) => ({ label: e.label, on: Object.entries(e.byInvoice).map(([inv, g]) => `${inv} (${fmtBoth(g)})`) }));
+  })();
   const combinedCompanies = ["daddyspipes", "merc"].filter((c) =>
     combinedOrders.some((o) => (o.invoiceCompany || invoiceCompany(o)) === c));
   const payShown = payOnCombined || combinedCompanies;
@@ -6561,12 +6576,14 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
   // Where a batch already appears on this shipment — this invoice, or any sibling from the same
   // split. Adding product that's already billed is invisible once the invoices are apart: each one
   // reads fine on its own and only the combined sheet shows the same pounds charged twice.
+  // Only a SIBLING invoice counts. Adding a second package off the same batch to the invoice being
+  // edited is normal work; putting it on the other facility's invoice as well is the double-bill.
   function alreadyOnShipment(batchId) {
     const hits = [];
-    editLineItems.filter((li) => li.batchId === batchId)
-      .forEach((li) => hits.push({ invoice: order.orderNumber, grams: li.grams }));
-    siblings.forEach((sib) => (sib.lineItems || []).filter((li) => li.batchId === batchId)
-      .forEach((li) => hits.push({ invoice: sib.orderNumber, grams: li.grams })));
+    siblings.forEach((sib) => {
+      const g = (sib.lineItems || []).filter((li) => li.batchId === batchId).reduce((t, li) => t + (Number(li.grams) || 0), 0);
+      if (g > 0) hits.push({ invoice: sib.orderNumber, grams: g });
+    });
     return hits;
   }
 
@@ -6706,21 +6723,6 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
     }).join("");
     const grandGrams = combinedOrders.reduce((t, o) => t + (o.lineItems || []).reduce((w, li) => w + (Number(li.grams) || 0), 0), 0);
     const grandTotal = combinedOrders.reduce((t, o) => t + (Number(o.subtotal) || 0), 0);
-    // Last line of defence before this goes out with the manifest: name any batch that appears on
-    // more than one invoice here. Each invoice reads correctly alone, so a double-bill is only
-    // visible at this level — and by the time it prints, the product is on the truck.
-    const batchSeen = {};
-    combinedOrders.forEach((o) => (o.lineItems || []).forEach((li) => {
-      if (!li.batchId) return;
-      (batchSeen[li.batchId] = batchSeen[li.batchId] || { label: `${liName(li)} - Batch ${li.lot || "—"}`, on: [] })
-        .on.push(`${o.orderNumber} (${fmtBoth(li.grams)})`);
-    }));
-    const doubled = Object.values(batchSeen).filter((x) => x.on.length > 1);
-    const dupeWarning = doubled.length === 0 ? "" :
-      `<div style="border:2px solid #B9603F;background:#FBF0EC;color:#7A2E16;padding:10px 12px;margin:14px 0;font-size:12px;">` +
-      `<strong>Check before sending — the same batch is billed on more than one invoice.</strong><br>` +
-      doubled.map((x) => `${x.label}: ${x.on.join(" and ")}`).join("<br>") +
-      `<br><br>If that product only shipped once, one of these lines is a duplicate and the combined total is overstated.</div>`;
     const manifests = Array.from(new Set(combinedOrders.map((o) => (o.manifestNumber || "").trim()).filter(Boolean)));
     const shipperHTML = shipper && shipper.name
       ? `<div class="shipper-top"><div class="biz">${shipper.name}</div>${shipper.license ? `<div>License: ${shipper.license}</div>` : ""}${shipper.address ? `<div>${shipper.address}</div>` : ""}${shipper.contact ? `<div>${shipper.contact}</div>` : ""}</div>`
@@ -6758,7 +6760,6 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
         </div>
         <div style="text-align:right"><div><b>Date:</b> ${order.date}</div><div><b>Prepared by:</b> ${order.staff}</div>${manifests.length ? `<div><b>Manifest #:</b> ${manifests.join(", ")}</div>` : ""}</div>
       </div>
-      ${dupeWarning}
       <table><thead>${colHead}</thead><tbody>${sections}</tbody></table>
       <div class="total"><span>Total Weight</span><span><b>${fmtBoth(grandGrams)}</b></span></div>
       <div class="total" style="border-top:none;margin-top:4px;padding-top:0;"><span>Combined Total</span><span><b>${fmtMoney(grandTotal)}</b></span></div>
@@ -6906,6 +6907,20 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
           {isPaid ? <CheckCircle2 size={14} color="#8FAF8B" /> : <Circle size={14} color="#C9A24B" />} Mark as {isPaid ? "Unpaid" : "Paid"}
         </button>
       </div>
+      {doubleBilled.length > 0 && (
+        <div style={{ marginBottom: 14, padding: "10px 12px", background: "rgba(185,96,63,0.10)", border: "1px solid #B9603F", borderRadius: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <AlertTriangle size={15} color="#C97B63" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 12, color: "#E0BFB2" }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>The same batch is billed on more than one invoice in this shipment.</div>
+              {doubleBilled.map((d) => (
+                <div key={d.label} style={{ fontSize: 11.5, color: "#D8B5A8" }}>{d.label}: {d.on.join(" and ")}</div>
+              ))}
+              <div style={{ fontSize: 11.5, color: "#A8917F", marginTop: 5 }}>If it only shipped once, one of those lines is a duplicate and the combined total is overstated. This note is for you — it never prints on the customer's sheet.</div>
+            </div>
+          </div>
+        </div>
+      )}
       {siblings.length > 0 && (
         <div style={{ marginBottom: 14, padding: "10px 12px", background: "#161B10", border: "1px solid #2A3324", borderRadius: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <Link2 size={14} color="#C9A24B" />
