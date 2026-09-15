@@ -2576,7 +2576,7 @@ export default function App() {
         {tab === "reports" && can("reports") && <ReportsTab batches={scopedInStock} orders={scopedOrders} trimLogs={scopedTrimLogs} buckedLots={scopedBuckedLots} trimEntries={scopedTrimEntries} gradeEntries={scopedGradeEntries} wasteEntries={scopedWasteEntries} unit={unit} visibleSources={visibleSources} />}
         {tab === "reconcile" && fullAccess && (
           <ReconciliationTab
-            batches={scopedInStock} unit={unit} currentUser={currentUser} reconciliations={data.reconciliations}
+            batches={scopedInStock} unit={unit} currentUser={currentUser} reconciliations={data.reconciliations} strainNames={data.strainNames}
             onSubmitReconciliation={(rec) => {
               const batches = data.batches.map((b) => {
                 const adj = rec.adjustments.find((a) => a.batchId === b.id);
@@ -6471,7 +6471,15 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
   // Customer-facing strain name. Prefer an explicit per-line "sell as", but still run it through the
   // map — because older line items saved the NUMBER into displayStrain, and we want those to resolve
   // to the real name too. Falls through unchanged for anything already typed as a name.
-  const liName = (li) => strainDisplay(li.displayStrain || li.strain, strainNames);
+  // Strain numbers are internal tracking, so an invoice shows the customer-facing NAME by default.
+  // Some customers order by number and want to see it, so each invoice carries its own choice — set
+  // once, saved on the order, so a reprint months later matches the copy they already have. This is
+  // the only place a line's name is composed, so screen, print, PDF, email and the combined sheet
+  // all follow it together.
+  const showStrainNumbers = !!(order && order.showStrainNumbers);
+  const liName = (li) => showStrainNumbers
+    ? strainWithNumber(li.displayStrain || li.strain, strainNames)
+    : strainDisplay(li.displayStrain || li.strain, strainNames);
   // Total product weight across all line items (for the invoice summary).
   const invoiceTotalGrams = (order?.lineItems || []).reduce((s, li) => s + (Number(li.grams) || 0), 0);
   // Ship To / Bill To blocks. Newer orders store shipTo/billTo explicitly; older orders only have the
@@ -6924,6 +6932,13 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
         </button>
         <button style={styles.iconLabelBtn} onClick={emailToDistribution}><Mail size={14} /> Email to Distribution</button>
         <button
+          style={{ ...styles.iconLabelBtn, background: showStrainNumbers ? "rgba(201,162,75,0.16)" : "transparent", borderColor: showStrainNumbers ? "#5A4A2A" : "#2A3324" }}
+          title="Strain numbers are internal — off by default. Turning this on adds the number beside the name on this invoice only, and it stays on for reprints."
+          onClick={() => onToggleStrainNumbers(order.id)}
+        >
+          <Tag size={14} color={showStrainNumbers ? "#C9A24B" : "#8C9483"} /> Strain # {showStrainNumbers ? "On" : "Off"}
+        </button>
+        <button
           style={{ ...styles.iconLabelBtn, background: isPaid ? "rgba(124,148,115,0.16)" : "rgba(201,162,75,0.16)", borderColor: isPaid ? "#4A5A42" : "#5A4A2A" }}
           onClick={() => onTogglePaid(order.id)}
         >
@@ -7072,17 +7087,42 @@ function InvoiceView({ order, allOrders, distributionEmail, shipper, paymentInfo
 
 // ---------- REPORTS ----------
 
-function ReconciliationTab({ batches, unit, currentUser, reconciliations, onSubmitReconciliation }) {
+function ReconciliationTab({ batches, unit, currentUser, reconciliations, strainNames, onSubmitReconciliation }) {
   const [counts, setCounts] = useState({});
   const [reasons, setReasons] = useState({});
   const [query, setQuery] = useState("");
   const [justSubmitted, setJustSubmitted] = useState(null);
+  const [collapsed, setCollapsed] = useState({});   // { "source::room": true }
+  const nameOf = (b) => strainWithNumber(b.strain, strainNames);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return batches;
-    return batches.filter((b) => b.strain.toLowerCase().includes(q) || b.room.toLowerCase().includes(q) || (b.lot || "").toLowerCase().includes(q));
-  }, [batches, query]);
+    return batches.filter((b) => b.strain.toLowerCase().includes(q) || b.room.toLowerCase().includes(q) || (b.lot || "").toLowerCase().includes(q)
+      || strainWithNumber(b.strain, strainNames).toLowerCase().includes(q));
+  }, [batches, query, strainNames]);
+
+  // Counting happens room by room, so the page is shaped the way the walk is: each facility, then
+  // each room in it, then every harvest sitting in that room. A room holding three batches shows
+  // three lines — they're separate harvests with separate tags and they reconcile separately.
+  const facilities = useMemo(() => {
+    const bySource = {};
+    filtered.forEach((b) => {
+      const src = b.source || "daddyspipes";
+      const room = b.room || "(no room)";
+      const f = bySource[src] = bySource[src] || { source: src, rooms: {}, total: 0 };
+      const r = f.rooms[room] = f.rooms[room] || { room, batches: [], total: 0 };
+      r.batches.push(b); r.total += b.remainingGrams; f.total += b.remainingGrams;
+    });
+    return Object.values(bySource)
+      .sort((a, b) => naturalCompare(SOURCE_META[a.source].label, SOURCE_META[b.source].label))
+      .map((f) => ({
+        ...f,
+        rooms: Object.values(f.rooms)
+          .sort((a, b) => naturalCompare(a.room, b.room))
+          .map((r) => ({ ...r, batches: [...r.batches].sort((x, y) => naturalCompare(x.lot || "", y.lot || "") || naturalCompare(x.strain, y.strain)) })),
+      }));
+  }, [filtered]);
 
   function gramsFromInput(v) {
     const n = parseFloat(v);
@@ -7113,7 +7153,7 @@ function ReconciliationTab({ batches, unit, currentUser, reconciliations, onSubm
     <div>
       <div style={styles.sectionLabel}>INVENTORY RECONCILIATION</div>
       <div style={{ fontSize: 12, color: "#8C9483", marginBottom: 14 }}>
-        Count what's actually on the shelf and enter it below. Only batches where your count differs from the system get adjusted — everything else stays untouched. Every change is logged with who did it and when.
+        Grouped by facility and room, the way you walk it. A room holding three harvests shows three lines — each has its own batch number and reconciles on its own. Enter what's on the shelf; only batches where your count differs from the system get adjusted, and every change is logged with who did it and when.
       </div>
       {justSubmitted && <div style={styles.noticeBox}>Saved — {justSubmitted.count} batch{justSubmitted.count === 1 ? "" : "es"} adjusted.</div>}
       <div style={styles.searchBar}>
@@ -7121,32 +7161,96 @@ function ReconciliationTab({ batches, unit, currentUser, reconciliations, onSubm
         <input style={styles.searchInput} placeholder="Search by strain, room, or batch #…" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
       {filtered.length === 0 && <div style={styles.emptyState}>Nothing matches that search.</div>}
-      <div style={styles.strainGrid}>
-        {filtered.map((b) => {
-          const val = counts[b.id];
-          const g = val !== undefined && val !== "" ? gramsFromInput(val) : null;
-          const hasVariance = g !== null && g !== b.remainingGrams;
-          return (
-            <div key={b.id} style={{ ...styles.orderRow, alignItems: "flex-start", borderColor: hasVariance ? "#C9A24B" : "#2A3324" }}>
-              <div style={{ flex: 1 }}>
-                <div style={styles.strainName}>{b.strain} · {b.room} <GradeBadge grade={b.grade} isBest={b.isBest} /></div>
-                <div style={styles.historyMeta}>{SOURCE_META[b.source].label}{b.lot ? ` · Batch ${b.lot}` : ""} · System: {fmtWeight(b.remainingGrams, unit)}</div>
-                {hasVariance && (
-                  <input style={{ ...styles.input, marginTop: 6, maxWidth: 260 }} value={reasons[b.id] || ""} onChange={(e) => setReasons({ ...reasons, [b.id]: e.target.value })} placeholder="Reason (optional) — shrinkage, count error, etc." />
-                )}
+      {facilities.length > 1 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <button type="button" style={{ ...styles.iconLabelBtn, fontSize: 11.5 }} onClick={() => setCollapsed({})}>Expand all rooms</button>
+          <button type="button" style={{ ...styles.iconLabelBtn, fontSize: 11.5 }} onClick={() => {
+            const all = {};
+            facilities.forEach((f) => f.rooms.forEach((r) => { all[`${f.source}::${r.room}`] = true; }));
+            setCollapsed(all);
+          }}>Collapse all rooms</button>
+        </div>
+      )}
+      {facilities.map((f) => {
+        const fCounted = f.rooms.reduce((t, r) => t + r.batches.reduce((s2, b) => {
+          const g = counts[b.id] !== undefined && counts[b.id] !== "" ? gramsFromInput(counts[b.id]) : null;
+          return s2 + (g === null ? b.remainingGrams : g);
+        }, 0), 0);
+        const fVar = fCounted - f.total;
+        return (
+          <div key={f.source} style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "8px 10px", background: "rgba(201,162,75,0.08)", border: "1px solid #3A4433", borderRadius: 8, marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <OriginDot origin={f.source} />
+                <span style={{ fontWeight: 700, color: "#EDE8D8", fontSize: 14 }}>{SOURCE_META[f.source].label}</span>
+                <span style={{ fontSize: 11.5, color: "#8C9483" }}>{f.rooms.length} room{f.rooms.length === 1 ? "" : "s"}</span>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                <input style={{ ...styles.input, width: 100, textAlign: "right" }} type="number" step="0.01" min="0" value={val || ""} onChange={(e) => setCounts({ ...counts, [b.id]: e.target.value })} placeholder={unit === "lb" ? "0.00" : "0"} />
-                {hasVariance && (
-                  <span style={{ fontSize: 11, fontWeight: 600, color: g > b.remainingGrams ? "#8FAF8B" : "#B9603F" }}>
-                    {g > b.remainingGrams ? "+" : ""}{fmtWeight(g - b.remainingGrams, unit)}
-                  </span>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 12, color: "#EDE8D8", fontFamily: "'IBM Plex Mono', monospace" }}>{fmtWeight(f.total, unit)}</div>
+                {Math.abs(fVar) >= 0.5 && (
+                  <div style={{ fontSize: 11, fontWeight: 600, color: fVar > 0 ? "#8FAF8B" : "#B9603F" }}>{fVar > 0 ? "+" : ""}{fmtWeight(fVar, unit)} counted</div>
                 )}
               </div>
             </div>
-          );
-        })}
-      </div>
+            {f.rooms.map((r) => {
+              const key = `${f.source}::${r.room}`;
+              const isCollapsed = !!collapsed[key];
+              const rCounted = r.batches.reduce((s2, b) => {
+                const g = counts[b.id] !== undefined && counts[b.id] !== "" ? gramsFromInput(counts[b.id]) : null;
+                return s2 + (g === null ? b.remainingGrams : g);
+              }, 0);
+              const rVar = rCounted - r.total;
+              const rTouched = r.batches.some((b) => counts[b.id] !== undefined && counts[b.id] !== "");
+              return (
+                <div key={key} style={{ marginBottom: 10, marginLeft: 6 }}>
+                  <div
+                    onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
+                    style={{ cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "6px 10px", borderLeft: `3px solid ${rTouched && Math.abs(rVar) >= 0.5 ? "#C9A24B" : "#3A4433"}`, background: "#161B10", borderRadius: 4 }}
+                  >
+                    <span style={{ fontWeight: 600, color: "#EDE8D8", fontSize: 13 }}>
+                      {isCollapsed ? "▸" : "▾"} Room {r.room}
+                      <span style={{ fontSize: 11.5, color: "#8C9483", fontWeight: 400 }}> · {r.batches.length} batch{r.batches.length === 1 ? "" : "es"}</span>
+                    </span>
+                    <span style={{ fontSize: 12, color: "#B9BFA9", fontFamily: "'IBM Plex Mono', monospace" }}>
+                      {fmtWeight(r.total, unit)}
+                      {rTouched && Math.abs(rVar) >= 0.5 && (
+                        <span style={{ marginLeft: 8, fontWeight: 700, color: rVar > 0 ? "#8FAF8B" : "#B9603F" }}>{rVar > 0 ? "+" : ""}{fmtWeight(rVar, unit)}</span>
+                      )}
+                    </span>
+                  </div>
+                  {!isCollapsed && r.batches.map((b) => {
+                    const val = counts[b.id];
+                    const g = val !== undefined && val !== "" ? gramsFromInput(val) : null;
+                    const hasVariance = g !== null && g !== b.remainingGrams;
+                    return (
+                      <div key={b.id} style={{ ...styles.orderRow, alignItems: "flex-start", marginLeft: 10, borderColor: hasVariance ? "#C9A24B" : "#2A3324" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={styles.strainName}>
+                            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#C9A24B" }}>{b.lot || "no batch #"}</span>
+                            <span style={{ color: "#8C9483" }}> · </span>{nameOf(b)} <GradeBadge grade={b.grade} isBest={b.isBest} />
+                          </div>
+                          <div style={styles.historyMeta}>System: {fmtWeight(b.remainingGrams, unit)}</div>
+                          {hasVariance && (
+                            <input style={{ ...styles.input, marginTop: 6, maxWidth: 260 }} value={reasons[b.id] || ""} onChange={(e) => setReasons({ ...reasons, [b.id]: e.target.value })} placeholder="Reason (optional) — shrinkage, count error, etc." />
+                          )}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                          <input style={{ ...styles.input, width: 100, textAlign: "right" }} type="number" step="0.01" min="0" value={val || ""} onChange={(e) => setCounts({ ...counts, [b.id]: e.target.value })} placeholder={unit === "lb" ? "0.00" : "0"} />
+                          {hasVariance && (
+                            <span style={{ fontSize: 11, fontWeight: 600, color: g > b.remainingGrams ? "#8FAF8B" : "#B9603F" }}>
+                              {g > b.remainingGrams ? "+" : ""}{fmtWeight(g - b.remainingGrams, unit)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
       {adjustments.length > 0 && (
         <button style={styles.submitBtn} onClick={submit}><ClipboardCheck size={16} /> Save Reconciliation ({adjustments.length} change{adjustments.length === 1 ? "" : "s"})</button>
       )}
