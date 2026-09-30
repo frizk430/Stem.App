@@ -25,7 +25,7 @@ export default async function handler(req, res) {
       .map(([num, name]) => `#${num} = ${name}`)
       .join("\n");
 
-    const prompt = `You are the intent router for a cannabis inventory app's quick-entry assistant. Decide whether the person is PLACING AN ORDER or ASKING A QUESTION about inventory. Output ONLY valid JSON, no preamble, no markdown fences.
+    const prompt = `You are the intent router for a cannabis inventory app's quick-entry assistant. Decide whether the person is PLACING AN ORDER, asking about current STOCK, asking about SALES/REVENUE, or asking about a CUSTOMER'S BALANCE. Output ONLY valid JSON, no preamble, no markdown fences.
 
 Valid rooms: ${JSON.stringify(rooms || [])}
 Valid grades: ${JSON.stringify(grades || [])}
@@ -40,6 +40,14 @@ Same extraction rules as before for the lines: room/grade must be the closest ma
 If it's a QUESTION about stock/inventory (how much, do I have, what's left, etc.):
 Respond with: {"type": "question", "strainQuery": "... or null", "room": "... or null (closest match from valid rooms)", "grade": "... or null (closest match from valid grades)"}
 Extract only what they actually asked about — leave a field null if they didn't specify it (e.g. asking about a strain with no room mentioned means room is null, meaning "across all rooms"). CRITICAL: strainQuery must be ONLY the strain identifier (a name or a number, with or without a leading #) — never include a grade letter or word in strainQuery. "Mega Queso A" means strainQuery "Mega Queso" and grade "A", not strainQuery "Mega Queso A".
+
+If it's a QUESTION about SALES/REVENUE (how much did we sell, how much did we make, what did we ship, etc. — about completed sales, not current stock):
+Respond with: {"type": "sales", "period": "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "all_time", "customer": "... or null"}
+"period" must always be one of those exact values — pick "all_time" if no timeframe is mentioned or implied. "customer" is a business name if the question is about sales to one specific customer (e.g. "how much did we sell LB Atlantis this month"), otherwise null.
+
+If it's a QUESTION about a CUSTOMER'S BALANCE / what they owe (how much does X owe, is X paid up, X's balance, etc.):
+Respond with: {"type": "balance", "customer": "the customer/business name"}
+If you can't identify which customer, use "unclear" instead — never guess a customer name.
 
 If you genuinely can't tell what they want:
 Respond with: {"type": "unclear"}
