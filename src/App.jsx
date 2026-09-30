@@ -1555,7 +1555,8 @@ export default function App() {
   const [bubbleError, setBubbleError] = useState("");
   const [bubbleAnswer, setBubbleAnswer] = useState(null); // { totalLb, groups } | "notfound" | null
   const [bubbleOrderQueue, setBubbleOrderQueue] = useState([]);
-  const [handoffAiQueue, setHandoffAiQueue] = useState([]); // consumed once by OrdersTab
+  const [bubbleOrderCustomer, setBubbleOrderCustomer] = useState(null);
+  const [handoffAiOrder, setHandoffAiOrder] = useState(null); // { lines, customer } | null — consumed once by OrdersTab
 
   async function askBubble() {
     if (!bubbleText.trim()) return;
@@ -1594,6 +1595,7 @@ export default function App() {
           };
         });
         setBubbleOrderQueue(rows);
+        setBubbleOrderCustomer(result.customer || null);
       } else {
         setBubbleError("Wasn't sure if that's a question or an order — try rephrasing.");
       }
@@ -1604,8 +1606,9 @@ export default function App() {
     }
   }
   function sendBubbleQueueToOrder() {
-    setHandoffAiQueue(bubbleOrderQueue);
+    setHandoffAiOrder({ lines: bubbleOrderQueue, customer: bubbleOrderCustomer });
     setBubbleOrderQueue([]);
+    setBubbleOrderCustomer(null);
     setBubbleText("");
     setBubbleOpen(false);
     setInvoiceOrderId(null);
@@ -2725,7 +2728,7 @@ export default function App() {
             heldByBatch={heldByBatch} strainNames={data.strainNames} shipper={data.shipper}
             nextOrderNumber={data.nextOrderNumber || data.orders.length + 1}
             unit={unit} enteringFacility={enteringAt}
-            initialAiQueue={handoffAiQueue} onConsumeInitialAiQueue={() => setHandoffAiQueue([])}
+            initialAiOrder={handoffAiOrder} onConsumeInitialAiOrder={() => setHandoffAiOrder(null)}
             onCreatePending={(order, newCustomer) => {
               // New Order: split by company into one or two independent PENDING orders, each with its
               // own company invoice number (NG###/MERC###). Product is held, not deducted.
@@ -3060,6 +3063,9 @@ export default function App() {
 
             {bubbleOrderQueue.length > 0 && (
               <div style={{ marginTop: 10 }}>
+                {bubbleOrderCustomer && (
+                  <div style={{ fontSize: 12.5, color: "#C9A24B", marginBottom: 8 }}>For: {bubbleOrderCustomer}</div>
+                )}
                 {bubbleOrderQueue.map((row) => {
                   const chosenBatch = scopedInStock.find((b) => b.id === row.batchId);
                   return (
@@ -6383,7 +6389,7 @@ function aggregateStockShared(batches, strainNames, { strainQuery, room, grade }
   return { totalLb, groups };
 }
 
-function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOverrides, nextOrderNumber, canDelete, canMovement, canShip, heldByBatch, unit, strainNames, shipper, enteringFacility, onCreatePending, onCreateSample, onShipOrder, onReturnSample, onConvertSample, onCancelPending, onLogMovement, onOpenInvoice, onDeleteOrder, initialAiQueue, onConsumeInitialAiQueue }) {
+function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOverrides, nextOrderNumber, canDelete, canMovement, canShip, heldByBatch, unit, strainNames, shipper, enteringFacility, onCreatePending, onCreateSample, onShipOrder, onReturnSample, onConvertSample, onCancelPending, onLogMovement, onOpenInvoice, onDeleteOrder, initialAiOrder, onConsumeInitialAiOrder }) {
   const liName = (li) => strainDisplay(li.displayStrain || li.strain, strainNames);
   // Three-tab lifecycle: "new" (create + hold), "ship" (add Metrc + deduct), "samples" (temp hold).
   const [subtab, setSubtab] = useState("new");
@@ -6527,6 +6533,16 @@ function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOv
     const c = customers.find((x) => x.id === id);
     if (c) { setCustomer(c.name); setCustomerLicense(c.license || ""); setCustomerAddress(c.address || ""); }
   }
+  // Applies a customer name extracted from shorthand text (Quick Add or the assistant bubble).
+  // Matches an existing customer by name if there is one; otherwise fills in the business name
+  // as a new customer, same as typing it by hand. Never overwrites a customer already entered.
+  function applyExtractedCustomer(name) {
+    const n = String(name || "").trim();
+    if (!n || customer.trim()) return;
+    const match = customers.find((c) => c.name.toLowerCase() === n.toLowerCase());
+    if (match) handleCustomerSelect(match.id);
+    else setCustomer(n);
+  }
   function handleBatchSelect(id) {
     setBatchId(id);
     const b = batches.find((x) => x.id === id);
@@ -6575,12 +6591,13 @@ function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOv
 
   // Picks up a queue handed off from the global assistant bubble (asked from another tab), once.
   useEffect(() => {
-    if (initialAiQueue && initialAiQueue.length > 0 && entryKind === "order" && subtab === "new") {
-      setAiQueue(initialAiQueue);
+    if (initialAiOrder && initialAiOrder.lines && initialAiOrder.lines.length > 0 && entryKind === "order" && subtab === "new") {
+      setAiQueue(initialAiOrder.lines);
       setAiOrderOpen(true);
-      if (onConsumeInitialAiQueue) onConsumeInitialAiQueue();
+      applyExtractedCustomer(initialAiOrder.customer);
+      if (onConsumeInitialAiOrder) onConsumeInitialAiOrder();
     }
-  }, [initialAiQueue]);
+  }, [initialAiOrder]);
 
   function resolveStrainKeys(strainQuery) { return resolveStrainKeysShared(strainNames, strainQuery); }
   function matchCandidateBatches(line) { return matchCandidateBatchesShared(batches, strainNames, spokenForByBatch, line); }
@@ -6599,6 +6616,7 @@ function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOv
       });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "Request failed"); }
       const data = await res.json();
+      applyExtractedCustomer(data.customer);
       const rows = (data.lines || []).map((line, i) => {
         const candidates = matchCandidateBatches(line);
         const chosen = candidates[0];

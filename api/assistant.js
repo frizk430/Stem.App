@@ -33,8 +33,9 @@ Known strain number shortcuts:
 ${strainNameLines || "(none registered)"}
 
 If it's an ORDER (mentions selling, a price, "new order", quantities being sold, etc.):
-Respond with: {"type": "order", "lines": [{"raw": "...", "room": "...", "strainQuery": "...", "grade": "...", "qtyLb": 0, "priceType": "perlb", "priceValue": 0}]}
-Same extraction rules as before: room/grade must be the closest match from the valid lists or null; strainQuery is verbatim, never resolved by you; qtyLb is null if not mentioned — never guess; priceType is "total" only if explicitly stated as a lump sum, otherwise "perlb"; priceValue is null if no price mentioned.
+Respond with: {"type": "order", "customer": "... or null", "lines": [{"raw": "...", "room": "...", "strainQuery": "...", "grade": "...", "qtyLb": 0, "priceType": "perlb", "priceValue": 0}]}
+"customer" is the business/customer name the order is FOR, if mentioned anywhere (e.g. "order for LB Atlantis"). null if none mentioned. Never confuse a strain name or room for a customer name.
+Same extraction rules as before for the lines: room/grade must be the closest match from the valid lists or null; strainQuery is verbatim, never resolved by you; qtyLb is null if not mentioned — never guess; priceType is "total" only if explicitly stated as a lump sum, otherwise "perlb"; priceValue is null if no price mentioned.
 
 If it's a QUESTION about stock/inventory (how much, do I have, what's left, etc.):
 Respond with: {"type": "question", "strainQuery": "... or null", "room": "... or null (closest match from valid rooms)", "grade": "... or null (closest match from valid grades)"}

@@ -40,9 +40,10 @@ Rules:
 - "qtyLb" is the quantity in pounds as a number. If no quantity is mentioned for an entry, use null — never guess or default it.
 - "priceType" is "total" only if the person explicitly indicates the price is for the whole line (words like "total", "flat", "for the lot"). Otherwise "priceType" is "perlb" — this is the default.
 - "priceValue" is the price as a number (no $ sign), or null if no price was mentioned.
+- Separately, also extract "customer": the business/customer name the order is FOR, if one is mentioned anywhere in the text (e.g. "order for LB Atlantis", "LB Atlantis order of..."). null if no customer name is mentioned. Never confuse a strain name or room for a customer name.
 
 Respond with exactly this shape:
-{"lines": [{"raw": "the portion of text this entry came from", "room": "...", "strainQuery": "...", "grade": "...", "qtyLb": 0, "priceType": "perlb", "priceValue": 0}]}
+{"customer": "... or null", "lines": [{"raw": "the portion of text this entry came from", "room": "...", "strainQuery": "...", "grade": "...", "qtyLb": 0, "priceType": "perlb", "priceValue": 0}]}
 
 Text to parse:
 ${text}`;
