@@ -1545,6 +1545,73 @@ export default function App() {
   const [unit, setUnit] = useState("lb");
   const [invoiceOrderId, setInvoiceOrderId] = useState(null);
 
+  // ---- Floating AI assistant (available on every tab). Questions are answered from real,
+  // computed numbers — the AI only ever decides what's being asked, never states a number
+  // itself. Orders are parsed the same way as Quick Add on the New Order tab, then handed
+  // off there for Frank to pick a customer and confirm before anything is created.
+  const [bubbleOpen, setBubbleOpen] = useState(false);
+  const [bubbleText, setBubbleText] = useState("");
+  const [bubbleLoading, setBubbleLoading] = useState(false);
+  const [bubbleError, setBubbleError] = useState("");
+  const [bubbleAnswer, setBubbleAnswer] = useState(null); // { totalLb, groups } | "notfound" | null
+  const [bubbleOrderQueue, setBubbleOrderQueue] = useState([]);
+  const [handoffAiQueue, setHandoffAiQueue] = useState([]); // consumed once by OrdersTab
+
+  async function askBubble() {
+    if (!bubbleText.trim()) return;
+    setBubbleLoading(true);
+    setBubbleError("");
+    setBubbleAnswer(null);
+    setBubbleOrderQueue([]);
+    try {
+      const validRooms = Array.from(new Set(scopedInStock.map((b) => b.room)));
+      const validGrades = Array.from(new Set(scopedInStock.map((b) => b.grade)));
+      const res = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: bubbleText, rooms: validRooms, grades: validGrades, strainNames: data.strainNames || {} }),
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "Request failed"); }
+      const result = await res.json();
+      if (result.type === "question") {
+        const agg = aggregateStockShared(scopedInStock, data.strainNames, { strainQuery: result.strainQuery, room: result.room, grade: result.grade });
+        setBubbleAnswer(agg || "notfound");
+      } else if (result.type === "order") {
+        const rows = (result.lines || []).map((line) => {
+          const candidates = matchCandidateBatchesShared(scopedInStock, data.strainNames, heldByBatch, line);
+          const chosen = candidates[0];
+          const grams = line.qtyLb != null ? Math.round(line.qtyLb * G_PER_LB) : 0;
+          let pricePerLb = "";
+          if (line.priceValue != null) {
+            pricePerLb = line.priceType === "total"
+              ? (grams > 0 ? String(Math.round((line.priceValue / (grams / G_PER_LB)) * 100) / 100) : "")
+              : String(line.priceValue);
+          }
+          return {
+            key: uid(), raw: line.raw || "", room: line.room || "", strainQuery: line.strainQuery || "", grade: line.grade || "",
+            candidates, batchId: chosen ? chosen.id : "", sellAs: chosen ? chosen.strain : "",
+            grams, pricePerLb, manualSearch: !chosen,
+          };
+        });
+        setBubbleOrderQueue(rows);
+      } else {
+        setBubbleError("Wasn't sure if that's a question or an order — try rephrasing.");
+      }
+    } catch (e) {
+      setBubbleError(e.message || "Couldn't reach the assistant — check your connection.");
+    } finally {
+      setBubbleLoading(false);
+    }
+  }
+  function sendBubbleQueueToOrder() {
+    setHandoffAiQueue(bubbleOrderQueue);
+    setBubbleOrderQueue([]);
+    setBubbleText("");
+    setBubbleOpen(false);
+    setInvoiceOrderId(null);
+    setTab("orders");
+  }
+
   useEffect(() => {
     // Detect an in-progress password recovery immediately: Supabase puts type=recovery in the URL hash
     // when someone clicks the reset link. We flag it up front so we never flash the full app at them.
@@ -2658,6 +2725,7 @@ export default function App() {
             heldByBatch={heldByBatch} strainNames={data.strainNames} shipper={data.shipper}
             nextOrderNumber={data.nextOrderNumber || data.orders.length + 1}
             unit={unit} enteringFacility={enteringAt}
+            initialAiQueue={handoffAiQueue} onConsumeInitialAiQueue={() => setHandoffAiQueue([])}
             onCreatePending={(order, newCustomer) => {
               // New Order: split by company into one or two independent PENDING orders, each with its
               // own company invoice number (NG###/MERC###). Product is held, not deducted.
@@ -2953,6 +3021,69 @@ export default function App() {
         )}
         </TabErrorBoundary>
       </main>
+
+      {/* Floating AI assistant — available on every tab. Questions get answered from real,
+          computed inventory numbers (never invented by the AI); orders get hand ed off to the
+          New Order tab for Frank to pick a customer and confirm before anything is created. */}
+      <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 500 }}>
+        {bubbleOpen && (
+          <div style={{ ...styles.form, width: 340, maxHeight: "70vh", overflowY: "auto", marginBottom: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.5)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={styles.formHeader}><Sparkles size={18} color="#C9A24B" /><span>Ask Stem</span></div>
+              <button type="button" style={styles.iconBtn} onClick={() => setBubbleOpen(false)}><X size={16} /></button>
+            </div>
+            <textarea style={{ ...styles.input, minHeight: 60, fontFamily: "inherit" }} value={bubbleText} onChange={(e) => setBubbleText(e.target.value)}
+              placeholder='"How much Blue Dream do I have?" or "F6 #7 A for 1200"' />
+            <button type="button" style={{ ...styles.submitBtn, background: "#7C9473", marginTop: 8 }} onClick={askBubble} disabled={bubbleLoading}>
+              {bubbleLoading ? <><Loader2 size={16} className="animate-spin" /> Thinking…</> : <><Sparkles size={16} /> Ask</>}
+            </button>
+            {bubbleError && <div style={styles.errorText}>{bubbleError}</div>}
+
+            {bubbleAnswer === "notfound" && (
+              <div style={{ marginTop: 10, fontSize: 13, color: "#8C9483" }}>Couldn't find anything matching that in stock right now.</div>
+            )}
+            {bubbleAnswer && bubbleAnswer !== "notfound" && (
+              <div style={{ marginTop: 10, padding: "10px 12px", background: "#161B10", border: "1px solid #2A3324", borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, color: "#EDE8D8", fontSize: 15, marginBottom: 6 }}>{fmtBoth(Math.round(bubbleAnswer.totalLb * G_PER_LB))} total</div>
+                {bubbleAnswer.groups.map((g, i) => (
+                  <div key={i} style={{ fontSize: 12, color: "#B9BFA9", marginBottom: 2 }}>
+                    {g.label} <GradeBadge grade={g.grade} isBest={false} /> · {g.room} · {g.lb.toFixed(2)} lb
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {bubbleOrderQueue.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                {bubbleOrderQueue.map((row) => {
+                  const chosenBatch = scopedInStock.find((b) => b.id === row.batchId);
+                  return (
+                    <div key={row.key} style={{ marginBottom: 8, padding: "8px 10px", background: "#161B10", border: "1px solid #2A3324", borderRadius: 8 }}>
+                      <div style={{ fontSize: 10.5, color: "#7C8571", fontStyle: "italic", marginBottom: 4 }}>"{row.raw}"</div>
+                      {chosenBatch ? (
+                        <div style={{ fontSize: 12.5, color: "#EDE8D8" }}>
+                          {chosenBatch.strain} <GradeBadge grade={chosenBatch.grade} isBest={chosenBatch.isBest} /> · {chosenBatch.room}
+                          {row.grams > 0 ? ` · ${fmtBoth(row.grams)}` : " · qty not mentioned"}{row.pricePerLb ? ` · ${fmtMoney(row.pricePerLb)}/lb` : ""}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: "#C9A24B" }}>Couldn't confidently match a batch for this one — you'll pick it manually in New Order.</div>
+                      )}
+                    </div>
+                  );
+                })}
+                <button type="button" style={{ ...styles.submitBtn, marginTop: 4 }} onClick={sendBubbleQueueToOrder}>
+                  <ClipboardList size={16} /> Review in New Order
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        <button type="button" onClick={() => setBubbleOpen((o) => !o)}
+          style={{ width: 56, height: 56, borderRadius: "50%", background: "#C9A24B", color: "#12160F", border: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.4)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+          title="Ask Stem">
+          <Sparkles size={24} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -6177,7 +6308,65 @@ function TrimTab({ buckedLots, trimmers, currentUser, customGrades, gradeDescrip
 // ---------- ORDERS (combines customer orders + internal movements) ----------
 
 
-function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOverrides, nextOrderNumber, canDelete, canMovement, canShip, heldByBatch, unit, strainNames, shipper, enteringFacility, onCreatePending, onCreateSample, onShipOrder, onReturnSample, onConvertSample, onCancelPending, onLogMovement, onOpenInvoice, onDeleteOrder }) {
+// ---- Shared AI matching helpers (used by both the New Order Quick Add box and the global
+// assistant bubble) — one source of truth for turning shorthand text into real inventory matches.
+function resolveStrainKeysShared(strainNames, strainQuery) {
+  const q = String(strainQuery || "").trim().toLowerCase();
+  if (!q) return [];
+  const keys = new Set([q]);
+  const numByName = Object.keys(strainNames || {}).find((num) => (strainNames[num] || "").toLowerCase() === q);
+  if (numByName) keys.add(numByName.toLowerCase());
+  return Array.from(keys);
+}
+function availableForShared(b, heldByBatch) { return b.remainingGrams - (heldByBatch?.[b.id] || 0); }
+function matchCandidateBatchesShared(batches, strainNames, heldByBatch, line) {
+  const roomQ = String(line.room || "").trim().toLowerCase();
+  const gradeQ = String(line.grade || "").trim().toLowerCase();
+  const strainKeys = resolveStrainKeysShared(strainNames, line.strainQuery);
+  return batches.filter((b) => {
+    if (availableForShared(b, heldByBatch) <= 0) return false;
+    if (roomQ && b.room.toLowerCase() !== roomQ) return false;
+    if (gradeQ && b.grade.toLowerCase() !== gradeQ) return false;
+    if (strainKeys.length) {
+      const bs = b.strain.toLowerCase();
+      if (!strainKeys.some((k) => bs === k || bs.includes(k))) return false;
+    }
+    return true;
+  }).sort((a, b) => availableForShared(b, heldByBatch) - availableForShared(a, heldByBatch));
+}
+// Deterministic stock lookup — no AI involved in the math, only in understanding the question.
+// Returns null if nothing matches, otherwise a total plus a per-batch breakdown the caller can
+// format however it likes.
+function aggregateStockShared(batches, strainNames, { strainQuery, room, grade }) {
+  const strainKeys = strainQuery ? resolveStrainKeysShared(strainNames, strainQuery) : null;
+  const roomQ = room ? String(room).trim().toLowerCase() : null;
+  const gradeQ = grade ? String(grade).trim().toLowerCase() : null;
+  const matches = batches.filter((b) => {
+    if (b.remainingGrams <= 0) return false;
+    if (roomQ && b.room.toLowerCase() !== roomQ) return false;
+    if (gradeQ && b.grade.toLowerCase() !== gradeQ) return false;
+    if (strainKeys && strainKeys.length) {
+      const bs = b.strain.toLowerCase();
+      if (!strainKeys.some((k) => bs === k || bs.includes(k))) return false;
+    }
+    return true;
+  });
+  if (matches.length === 0) return null;
+  const totalLb = matches.reduce((s, b) => s + b.remainingGrams, 0) / G_PER_LB;
+  const byGroup = {};
+  matches.forEach((b) => {
+    const label = strainDisplay(b.strain, strainNames);
+    const key = `${label}__${b.grade}__${b.room}`;
+    byGroup[key] = (byGroup[key] || 0) + b.remainingGrams;
+  });
+  const groups = Object.entries(byGroup).map(([k, g]) => {
+    const [label, grd, rm] = k.split("__");
+    return { label, grade: grd, room: rm, lb: g / G_PER_LB };
+  }).sort((a, b) => b.lb - a.lb);
+  return { totalLb, groups };
+}
+
+function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOverrides, nextOrderNumber, canDelete, canMovement, canShip, heldByBatch, unit, strainNames, shipper, enteringFacility, onCreatePending, onCreateSample, onShipOrder, onReturnSample, onConvertSample, onCancelPending, onLogMovement, onOpenInvoice, onDeleteOrder, initialAiQueue, onConsumeInitialAiQueue }) {
   const liName = (li) => strainDisplay(li.displayStrain || li.strain, strainNames);
   // Three-tab lifecycle: "new" (create + hold), "ship" (add Metrc + deduct), "samples" (temp hold).
   const [subtab, setSubtab] = useState("new");
@@ -6367,29 +6556,17 @@ function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOv
   const [aiOrderError, setAiOrderError] = useState("");
   const [aiQueue, setAiQueue] = useState([]); // [{ key, raw, room, strainQuery, grade, candidates, batchId, grams, pricePerLb, manualSearch }]
 
-  function resolveStrainKeys(strainQuery) {
-    const q = String(strainQuery || "").trim().toLowerCase();
-    if (!q) return [];
-    const keys = new Set([q]);
-    const numByName = Object.keys(strainNames || {}).find((num) => (strainNames[num] || "").toLowerCase() === q);
-    if (numByName) keys.add(numByName.toLowerCase());
-    return Array.from(keys);
-  }
-  function matchCandidateBatches(line) {
-    const roomQ = String(line.room || "").trim().toLowerCase();
-    const gradeQ = String(line.grade || "").trim().toLowerCase();
-    const strainKeys = resolveStrainKeys(line.strainQuery);
-    return batches.filter((b) => {
-      if (availableFor(b) <= 0) return false;
-      if (roomQ && b.room.toLowerCase() !== roomQ) return false;
-      if (gradeQ && b.grade.toLowerCase() !== gradeQ) return false;
-      if (strainKeys.length) {
-        const bs = b.strain.toLowerCase();
-        if (!strainKeys.some((k) => bs === k || bs.includes(k))) return false;
-      }
-      return true;
-    }).sort((a, b) => availableFor(b) - availableFor(a));
-  }
+  // Picks up a queue handed off from the global assistant bubble (asked from another tab), once.
+  useEffect(() => {
+    if (initialAiQueue && initialAiQueue.length > 0 && entryKind === "order" && subtab === "new") {
+      setAiQueue(initialAiQueue);
+      setAiOrderOpen(true);
+      if (onConsumeInitialAiQueue) onConsumeInitialAiQueue();
+    }
+  }, [initialAiQueue]);
+
+  function resolveStrainKeys(strainQuery) { return resolveStrainKeysShared(strainNames, strainQuery); }
+  function matchCandidateBatches(line) { return matchCandidateBatchesShared(batches, strainNames, spokenForByBatch, line); }
 
   async function parseAiOrderText() {
     if (!aiOrderText.trim()) return;
