@@ -6318,6 +6318,13 @@ function resolveStrainKeysShared(strainNames, strainQuery) {
   if (numByName) keys.add(numByName.toLowerCase());
   return Array.from(keys);
 }
+// A numeric key (a strain shortcut number) must match a batch's strain EXACTLY — "1" must never
+// match "11", "12", "21", etc. just because it's a substring of the digits. Substring matching is
+// only safe for a typed-out name, where "zour" matching "Zour Cherries" is exactly what's wanted.
+function strainKeyMatches(batchStrainLower, key) {
+  if (/^\d+$/.test(key)) return batchStrainLower === key;
+  return batchStrainLower === key || batchStrainLower.includes(key);
+}
 function availableForShared(b, heldByBatch) { return b.remainingGrams - (heldByBatch?.[b.id] || 0); }
 function matchCandidateBatchesShared(batches, strainNames, heldByBatch, line) {
   const roomQ = String(line.room || "").trim().toLowerCase();
@@ -6329,7 +6336,7 @@ function matchCandidateBatchesShared(batches, strainNames, heldByBatch, line) {
     if (gradeQ && b.grade.toLowerCase() !== gradeQ) return false;
     if (strainKeys.length) {
       const bs = b.strain.toLowerCase();
-      if (!strainKeys.some((k) => bs === k || bs.includes(k))) return false;
+      if (!strainKeys.some((k) => strainKeyMatches(bs, k))) return false;
     }
     return true;
   }).sort((a, b) => availableForShared(b, heldByBatch) - availableForShared(a, heldByBatch));
@@ -6347,7 +6354,7 @@ function aggregateStockShared(batches, strainNames, { strainQuery, room, grade }
     if (gradeQ && b.grade.toLowerCase() !== gradeQ) return false;
     if (strainKeys && strainKeys.length) {
       const bs = b.strain.toLowerCase();
-      if (!strainKeys.some((k) => bs === k || bs.includes(k))) return false;
+      if (!strainKeys.some((k) => strainKeyMatches(bs, k))) return false;
     }
     return true;
   });
