@@ -35,7 +35,7 @@ ${strainNameLines || "(none registered)"}
 Rules:
 - Split the text into one entry per distinct item mentioned.
 - "room" must be the closest matching value from the valid rooms list above (case-insensitive match), or null if you can't tell.
-- "strainQuery" is whatever the person used to identify the strain — copy it verbatim (could be a number like "7" or a name like "Zours"). Do not try to resolve it yourself.
+- "strainQuery" is whatever the person used to identify the strain — copy it verbatim (could be a number like "7" or a name like "Zours"). Do not try to resolve it yourself. Never include a grade letter or word in strainQuery — "Mega Queso A" means strainQuery "Mega Queso" and grade "A", not strainQuery "Mega Queso A".
 - "grade" must be the closest matching value from the valid grades list above (case-insensitive match), or null if not mentioned.
 - "qtyLb" is the quantity in pounds as a number. If no quantity is mentioned for an entry, use null — never guess or default it.
 - "priceType" is "total" only if the person explicitly indicates the price is for the whole line (words like "total", "flat", "for the lot"). Otherwise "priceType" is "perlb" — this is the default.

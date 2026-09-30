@@ -38,7 +38,7 @@ Same extraction rules as before: room/grade must be the closest match from the v
 
 If it's a QUESTION about stock/inventory (how much, do I have, what's left, etc.):
 Respond with: {"type": "question", "strainQuery": "... or null", "room": "... or null (closest match from valid rooms)", "grade": "... or null (closest match from valid grades)"}
-Extract only what they actually asked about — leave a field null if they didn't specify it (e.g. asking about a strain with no room mentioned means room is null, meaning "across all rooms").
+Extract only what they actually asked about — leave a field null if they didn't specify it (e.g. asking about a strain with no room mentioned means room is null, meaning "across all rooms"). CRITICAL: strainQuery must be ONLY the strain identifier (a name or a number, with or without a leading #) — never include a grade letter or word in strainQuery. "Mega Queso A" means strainQuery "Mega Queso" and grade "A", not strainQuery "Mega Queso A".
 
 If you genuinely can't tell what they want:
 Respond with: {"type": "unclear"}

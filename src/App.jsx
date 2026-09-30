@@ -6311,7 +6311,9 @@ function TrimTab({ buckedLots, trimmers, currentUser, customGrades, gradeDescrip
 // ---- Shared AI matching helpers (used by both the New Order Quick Add box and the global
 // assistant bubble) — one source of truth for turning shorthand text into real inventory matches.
 function resolveStrainKeysShared(strainNames, strainQuery) {
-  const q = String(strainQuery || "").trim().toLowerCase();
+  // Strip a leading "#" (and any surrounding spaces) defensively — whether or not the AI includes
+  // it, "#7" and "7" must resolve to the same key, since that's exactly how Frank writes these.
+  const q = String(strainQuery || "").trim().replace(/^#\s*/, "").toLowerCase();
   if (!q) return [];
   const keys = new Set([q]);
   const numByName = Object.keys(strainNames || {}).find((num) => (strainNames[num] || "").toLowerCase() === q);
