@@ -1575,7 +1575,7 @@ export default function App() {
       const result = await res.json();
       if (result.type === "question") {
         const agg = aggregateStockShared(scopedInStock, data.strainNames, { strainQuery: result.strainQuery, room: result.room, grade: result.grade });
-        setBubbleAnswer(agg || "notfound");
+        setBubbleAnswer(agg || { notfound: true, searched: result });
       } else if (result.type === "order") {
         const rows = (result.lines || []).map((line) => {
           const candidates = matchCandidateBatchesShared(scopedInStock, data.strainNames, heldByBatch, line);
@@ -3039,10 +3039,15 @@ export default function App() {
             </button>
             {bubbleError && <div style={styles.errorText}>{bubbleError}</div>}
 
-            {bubbleAnswer === "notfound" && (
-              <div style={{ marginTop: 10, fontSize: 13, color: "#8C9483" }}>Couldn't find anything matching that in stock right now.</div>
+            {bubbleAnswer && bubbleAnswer.notfound && (
+              <div style={{ marginTop: 10, fontSize: 13, color: "#8C9483" }}>
+                Couldn't find anything matching that in stock right now.
+                <div style={{ fontSize: 11, color: "#7C8571", marginTop: 4 }}>
+                  Searched for: strain "{bubbleAnswer.searched.strainQuery || "(any)"}", room "{bubbleAnswer.searched.room || "(any)"}", grade "{bubbleAnswer.searched.grade || "(any)"}"
+                </div>
+              </div>
             )}
-            {bubbleAnswer && bubbleAnswer !== "notfound" && (
+            {bubbleAnswer && !bubbleAnswer.notfound && (
               <div style={{ marginTop: 10, padding: "10px 12px", background: "#161B10", border: "1px solid #2A3324", borderRadius: 8 }}>
                 <div style={{ fontWeight: 700, color: "#EDE8D8", fontSize: 15, marginBottom: 6 }}>{fmtBoth(Math.round(bubbleAnswer.totalLb * G_PER_LB))} total</div>
                 {bubbleAnswer.groups.map((g, i) => (
