@@ -6329,7 +6329,10 @@ function resolveStrainKeysShared(strainNames, strainQuery) {
 // match "11", "12", "21", etc. just because it's a substring of the digits. Substring matching is
 // only safe for a typed-out name, where "zour" matching "Zour Cherries" is exactly what's wanted.
 function strainKeyMatches(batchStrainLower, key) {
-  if (/^\d+$/.test(key)) return batchStrainLower === key;
+  // Some batches have their strain stored with a literal leading "#" (inconsistent data entry),
+  // so normalize that side too — not just the typed query — before comparing.
+  const normalizedBatch = batchStrainLower.replace(/^#\s*/, "");
+  if (/^\d+$/.test(key)) return normalizedBatch === key;
   return batchStrainLower === key || batchStrainLower.includes(key);
 }
 function availableForShared(b, heldByBatch) { return b.remainingGrams - (heldByBatch?.[b.id] || 0); }
