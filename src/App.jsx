@@ -6,7 +6,7 @@ import {
   UserPlus, KeyRound, Settings, Tag, Scissors, Repeat, Download, Users,
   DollarSign, Image as ImageIcon, Gauge, CheckCircle2, Circle, LayoutGrid,
   RotateCcw, ChevronDown, Edit3, Cog, HelpCircle, Clock, ClipboardCheck,
-  Camera, ScanLine, Keyboard, Sprout, Check, Link2, BookOpen
+  Camera, ScanLine, Keyboard, Sprout, Check, Link2, BookOpen, Sparkles
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import Manual from "./Manual";
@@ -6330,27 +6330,114 @@ function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOv
   }
   const selectedBatch = batches.find((b) => b.id === batchId);
 
-  function addLineItem() {
-    const b = batches.find((x) => x.id === batchId);
+  function addLineItem(override) {
+    const ov = override || {};
+    const useBatchId = ov.batchId !== undefined ? ov.batchId : batchId;
+    const useSellAs = ov.sellAs !== undefined ? ov.sellAs : sellAs;
+    const useGrams = ov.grams !== undefined ? ov.grams : grams;
+    const usePricePerLb = ov.pricePerLb !== undefined ? ov.pricePerLb : pricePerLb;
+    const b = batches.find((x) => x.id === useBatchId);
     if (!b) return setError("Select a batch.");
-    if (grams <= 0) return setError("Enter a quantity greater than zero.");
+    if (useGrams <= 0) return setError("Enter a quantity greater than zero.");
     const available = availableFor(b);
-    if (grams > available) {
+    if (useGrams > available) {
       const note = spokenForNote(b);
       return setError(`Only ${fmtBoth(available)} available for that batch.${note ? ` ${note}.` : ""}`);
     }
-    const p = parseFloat(pricePerLb);
+    const p = parseFloat(usePricePerLb);
     if (isNaN(p) || p < 0) return setError("Enter a price per pound.");
     setError("");
-    const qtyLb = grams / G_PER_LB;
+    const qtyLb = useGrams / G_PER_LB;
     setLineItems([...lineItems, {
-      id: uid(), batchId: b.id, strain: b.strain, displayStrain: sellAs.trim() || b.strain, lot: b.lot,
-      source: b.source, room: b.room, grade: b.grade, isBest: b.isBest, grams, pricePerLb: p, lineTotal: qtyLb * p,
+      id: uid(), batchId: b.id, strain: b.strain, displayStrain: (useSellAs || "").trim() || b.strain, lot: b.lot,
+      source: b.source, room: b.room, grade: b.grade, isBest: b.isBest, grams: useGrams, pricePerLb: p, lineTotal: qtyLb * p,
     }]);
-    setBatchId(""); setSellAs(""); setGrams(0); setPricePerLb("");
+    if (!override) { setBatchId(""); setSellAs(""); setGrams(0); setPricePerLb(""); }
+    return true;
   }
   function removeLineItem(id) { setLineItems(lineItems.filter((li) => li.id !== id)); }
   const subtotal = lineItems.reduce((s, li) => s + li.lineTotal, 0);
+
+  // ---- AI Quick Add: parse shorthand text into draft line items, matched against real inventory.
+  // Nothing here creates an order or touches inventory — it only pre-fills the same addLineItem()
+  // used above, one row at a time, after Frank reviews and confirms each one.
+  const [aiOrderOpen, setAiOrderOpen] = useState(false);
+  const [aiOrderText, setAiOrderText] = useState("");
+  const [aiOrderLoading, setAiOrderLoading] = useState(false);
+  const [aiOrderError, setAiOrderError] = useState("");
+  const [aiQueue, setAiQueue] = useState([]); // [{ key, raw, room, strainQuery, grade, candidates, batchId, grams, pricePerLb, manualSearch }]
+
+  function resolveStrainKeys(strainQuery) {
+    const q = String(strainQuery || "").trim().toLowerCase();
+    if (!q) return [];
+    const keys = new Set([q]);
+    const numByName = Object.keys(strainNames || {}).find((num) => (strainNames[num] || "").toLowerCase() === q);
+    if (numByName) keys.add(numByName.toLowerCase());
+    return Array.from(keys);
+  }
+  function matchCandidateBatches(line) {
+    const roomQ = String(line.room || "").trim().toLowerCase();
+    const gradeQ = String(line.grade || "").trim().toLowerCase();
+    const strainKeys = resolveStrainKeys(line.strainQuery);
+    return batches.filter((b) => {
+      if (availableFor(b) <= 0) return false;
+      if (roomQ && b.room.toLowerCase() !== roomQ) return false;
+      if (gradeQ && b.grade.toLowerCase() !== gradeQ) return false;
+      if (strainKeys.length) {
+        const bs = b.strain.toLowerCase();
+        if (!strainKeys.some((k) => bs === k || bs.includes(k))) return false;
+      }
+      return true;
+    }).sort((a, b) => availableFor(b) - availableFor(a));
+  }
+
+  async function parseAiOrderText() {
+    if (!aiOrderText.trim()) return;
+    setAiOrderLoading(true);
+    setAiOrderError("");
+    try {
+      const validRooms = Array.from(new Set(batches.map((b) => b.room)));
+      const validGrades = Array.from(new Set(batches.map((b) => b.grade)));
+      const res = await fetch("/api/parse-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: aiOrderText, rooms: validRooms, grades: validGrades, strainNames: strainNames || {} }),
+      });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "Request failed"); }
+      const data = await res.json();
+      const rows = (data.lines || []).map((line, i) => {
+        const candidates = matchCandidateBatches(line);
+        const chosen = candidates[0];
+        const grams = line.qtyLb != null ? Math.round(line.qtyLb * G_PER_LB) : 0;
+        let pricePerLb = "";
+        if (line.priceValue != null) {
+          pricePerLb = line.priceType === "total"
+            ? (grams > 0 ? String(Math.round((line.priceValue / (grams / G_PER_LB)) * 100) / 100) : "")
+            : String(line.priceValue);
+        }
+        return {
+          key: uid(), raw: line.raw || "", room: line.room || "", strainQuery: line.strainQuery || "", grade: line.grade || "",
+          candidates, batchId: chosen ? chosen.id : "", sellAs: chosen ? chosen.strain : "",
+          grams, pricePerLb, manualSearch: !chosen,
+        };
+      });
+      setAiQueue(rows);
+      if (rows.length === 0) setAiOrderError("Didn't find any order lines in that text — try rephrasing.");
+    } catch (e) {
+      setAiOrderError(e.message || "Couldn't parse that — check your connection and try again.");
+    } finally {
+      setAiOrderLoading(false);
+    }
+  }
+  function updateQueueRow(key, patch) { setAiQueue((q) => q.map((r) => (r.key === key ? { ...r, ...patch } : r))); }
+  function pickQueueBatch(key, b) { updateQueueRow(key, { batchId: b.id, sellAs: b.strain, manualSearch: false }); }
+  function removeQueueRow(key) { setAiQueue((q) => q.filter((r) => r.key !== key)); }
+  function addQueueRow(key) {
+    const row = aiQueue.find((r) => r.key === key);
+    if (!row) return;
+    const ok = addLineItem({ batchId: row.batchId, sellAs: row.sellAs, grams: row.grams, pricePerLb: row.pricePerLb });
+    if (ok) removeQueueRow(key);
+  }
 
   function buildBaseOrder(status) {
     const orderNumber = `ORD-${String(nextOrderNumber).padStart(4, "0")}`;
@@ -6544,6 +6631,67 @@ function OrdersTab({ batches, currentUser, orders, customers, priceList, priceOv
               </div>
             )}
             <div style={styles.pinHint}>New customers are saved automatically so you won't need to retype them next time.</div>
+
+            <div style={{ ...styles.form, marginTop: 14, marginBottom: 14, borderColor: "#C9A24B33" }}>
+              <div style={styles.formHeader}><Sparkles size={18} color="#C9A24B" /><span>Quick Add (AI)</span></div>
+              {!aiOrderOpen ? (
+                <button type="button" style={styles.iconLabelBtn} onClick={() => setAiOrderOpen(true)}><Sparkles size={14} /> Type a shorthand order</button>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, color: "#8C9483", marginBottom: 8 }}>
+                    Type it however's fastest — e.g. "F6 #7 A for 1200, and 2 F4 #26 B for 800". Nothing is added to the order until you confirm each line below.
+                  </div>
+                  <textarea style={{ ...styles.input, minHeight: 70, fontFamily: "inherit" }} value={aiOrderText} onChange={(e) => setAiOrderText(e.target.value)} placeholder="New order - F6 #7 A for 1200, and 2 F4 #26 B for 800" />
+                  <button type="button" style={{ ...styles.submitBtn, background: "#7C9473", marginTop: 8 }} onClick={parseAiOrderText} disabled={aiOrderLoading}>
+                    {aiOrderLoading ? <><Loader2 size={16} className="animate-spin" /> Reading…</> : <><Sparkles size={16} /> Parse</>}
+                  </button>
+                  {aiOrderError && <div style={styles.errorText}>{aiOrderError}</div>}
+
+                  {aiQueue.map((row) => {
+                    const chosenBatch = batches.find((b) => b.id === row.batchId);
+                    const needsQty = !row.grams || row.grams <= 0;
+                    const needsBatch = !row.batchId;
+                    const needsPrice = !row.pricePerLb || parseFloat(row.pricePerLb) < 0;
+                    return (
+                      <div key={row.key} style={{ marginTop: 10, padding: "10px 12px", background: "#161B10", border: "1px solid #2A3324", borderRadius: 8 }}>
+                        <div style={{ fontSize: 11, color: "#7C8571", marginBottom: 8, fontStyle: "italic" }}>"{row.raw}"</div>
+                        {row.manualSearch || !chosenBatch ? (
+                          <>
+                            {!chosenBatch && <div style={{ fontSize: 11.5, color: "#C9A24B", marginBottom: 6 }}>Couldn't confidently match a batch — search for the right one:</div>}
+                            <BatchSearchPicker batches={batches} reservedByBatch={spokenForByBatch} onSelect={(b) => pickQueueBatch(row.key, b)} />
+                          </>
+                        ) : (
+                          <div style={styles.selectedBatchChip}>
+                            <div>
+                              <div style={{ fontWeight: 600, color: "#EDE8D8" }}>{chosenBatch.strain} <GradeBadge grade={chosenBatch.grade} isBest={chosenBatch.isBest} /></div>
+                              <div style={{ fontSize: 11, color: "#8C9483" }}>{SOURCE_META[chosenBatch.source].label} · {chosenBatch.room}{chosenBatch.lot ? ` · Batch ${chosenBatch.lot}` : ""} · {fmtBoth(availableFor(chosenBatch))} available</div>
+                              {row.candidates.length > 1 && <div style={{ fontSize: 10.5, color: "#C9A24B", marginTop: 2 }}>{row.candidates.length} matching batches found — this is the one with the most available.</div>}
+                            </div>
+                            <button type="button" style={styles.iconLabelBtn} onClick={() => updateQueueRow(row.key, { manualSearch: true })}>Change</button>
+                          </div>
+                        )}
+                        <div style={{ ...styles.twoCol, marginTop: 8 }}>
+                          <div>
+                            <FieldLabel>Quantity {needsQty && <span style={{ color: "#C9A24B" }}>— not mentioned, enter it</span>}</FieldLabel>
+                            <DualWeightInput grams={row.grams} onChange={(g) => updateQueueRow(row.key, { grams: g })} />
+                          </div>
+                          <div>
+                            <FieldLabel>Price / lb</FieldLabel>
+                            <input style={styles.input} type="number" step="0.01" value={row.pricePerLb} onChange={(e) => updateQueueRow(row.key, { pricePerLb: e.target.value })} placeholder="0.00" />
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button type="button" style={{ ...styles.submitBtn, background: "#7C9473", marginTop: 0 }} disabled={needsBatch || needsQty || needsPrice} onClick={() => addQueueRow(row.key)}>
+                            <Plus size={16} /> Add to Order
+                          </button>
+                          <button type="button" style={styles.backBtn} onClick={() => removeQueueRow(row.key)}>Discard</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
           </>
         )}
         <FieldLabel>Add line item</FieldLabel>
